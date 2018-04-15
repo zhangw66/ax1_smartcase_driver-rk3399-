@@ -50,6 +50,12 @@
 	    firefly-gpio = <&gpio0 12 GPIO_ACTIVE_HIGH>;          /* GPIO0_B4 */
 	    firefly-irq-gpio = <&gpio4 29 IRQ_TYPE_EDGE_RISING>;  /* GPIO4_D5 */
 	};
+	echelette_switch: echelette_switch {
+			status = "okay";
+			compatible = "neolix-switch-gpio";
+			switch-irq-gpio = <&gpio4 29 IRQ_TYPE_EDGE_RISING>;  /* GPIO4_D5 */
+	};
+
 	motor_open_door: motor_open_door {
 			status = "okay";
 			compatible = "neolix-motor-gpio";
