@@ -41,15 +41,15 @@ enum {
 	MOTOR_OPEN_DOOR_ID = 0,
 	MOTOR_ROTATE_ID = 1,
 } motor_name_t;
-#define MOTOR_NUMS 2
+#define MOTOR_NUMS 1
 enum {
-	MOTOR_GPIO_POSITIVE = 0,
-	MOTOR_GPIO_NEGATIVE = 1,
+	MOTOR_GPIO_DIR = 0,
+	MOTOR_GPIO_PWM = 1,
 } motor_gpio_type_t;
  enum  {
 	MOTOR_STOP = 0,
-	MOTOR_FORWARD,
-	MOTOR_REVERSE,
+	MOTOR_FORWARD = 1,
+	MOTOR_REVERSE = 2,
  };
 typedef struct motor {
 	int gpio[2];
@@ -58,26 +58,28 @@ typedef struct motor {
 	struct mutex lock;	/* mutex lock */
 	struct work_struct work;
 	struct timed_output_dev timed_dev;
+	int pwm_period_cnt;
 } motor_dev_t;
-
+#define MOTOR_PWM_4KHZ (1000 / 4 / 2)  //unit:us
 motor_dev_t motor_data[MOTOR_NUMS];
 
 
 static void motor_control(motor_dev_t *pmotor, int cmd)
 {
-	char pos_cmd, neg_cmd;
+#if 1
+	char dir_cmd;
 	MOTOR_DEBUG("%s[%d]:func in\n",__func__, __LINE__);
-	MOTOR_DEBUG("motor cmd is:%d\n", cmd);
+	MOTOR_DEBUG("motor dir cmd is:%d\n", cmd);
 	switch (cmd) {
-	case MOTOR_FORWARD:pos_cmd = 0; neg_cmd = 1;break;
-	case MOTOR_REVERSE:pos_cmd = 1; neg_cmd = 0;break;
-	case MOTOR_STOP:pos_cmd = 0; neg_cmd = 0;break;
-	default:
-	pos_cmd = 0; neg_cmd = 0;
+	case MOTOR_FORWARD:MOTOR_DEBUG("case MOTOR_FORWARD\n");dir_cmd = 1;break;
+	case MOTOR_REVERSE:MOTOR_DEBUG("case MOTOR_REVERSE\n");dir_cmd = 0;break;
+	case MOTOR_STOP:MOTOR_DEBUG("case MOTOR_STOP\n");break;
+	default:MOTOR_DEBUG("case default\n");
 	}
-	gpio_set_value((pmotor->gpio)[MOTOR_GPIO_POSITIVE], pos_cmd);    
-   	gpio_set_value((pmotor->gpio)[MOTOR_GPIO_NEGATIVE], neg_cmd);   
+	MOTOR_DEBUG("gpio_id:%d, data:%d\n", (pmotor->gpio)[MOTOR_GPIO_DIR], dir_cmd);
+	gpio_set_value((pmotor->gpio)[MOTOR_GPIO_DIR], dir_cmd);      
 	MOTOR_DEBUG("%s[%d]:func out\n",__func__, __LINE__);
+#endif
 }
 static int motor_id;
 
@@ -106,10 +108,14 @@ static void rk_motor_enable(struct timed_output_dev *sdev, int value)
 		
 		if (value > MAX_TIMEOUT)
 				value = MAX_TIMEOUT;
-		MOTOR_DEBUG("%s[%d]:hrtimer time %dms:\n",__func__, __LINE__, value);
+		MOTOR_DEBUG("%s[%d]:user set pwm output time:%dms:\n",__func__, __LINE__, value);
+		pmotor->pwm_period_cnt = value * 4 * 2;
+		MOTOR_DEBUG("%s[%d]:pwm period cnt:%d:\n",__func__, __LINE__, pmotor->pwm_period_cnt/2);
+
 		hrtimer_start(&pmotor->timer,
-			ns_to_ktime((u64)value * NSEC_PER_MSEC),
+			ns_to_ktime((u64)MOTOR_PWM_4KHZ * NSEC_PER_USEC),
 			HRTIMER_MODE_REL);
+		
 		
 	} else {
 			motor_control(pmotor, MOTOR_STOP);
@@ -121,6 +127,7 @@ static void rk_motor_enable(struct timed_output_dev *sdev, int value)
 
 static int rk_motor_get_time(struct timed_output_dev *sdev)
 {
+#if 0
 	motor_dev_t *pmotor = container_of(sdev, motor_dev_t, timed_dev);
 	MOTOR_DEBUG("%s: fun in\n", __func__);
 	MOTOR_DEBUG("name:%s\n", pmotor->motor_type);
@@ -131,18 +138,30 @@ static int rk_motor_get_time(struct timed_output_dev *sdev)
 		return ktime_to_ms(r);
 	}
 	MOTOR_DEBUG("%s[%d]:func out\n",__func__, __LINE__);
-
+#endif
 	return 0;
 }
 
 static enum hrtimer_restart rk_motor_timer_func(struct hrtimer *timer)
 {
-	motor_dev_t *pmotor = container_of(timer, motor_dev_t, timer);
-	MOTOR_DEBUG("%s: fun in\n", __func__);
+	enum hrtimer_restart ret;
 
+	motor_dev_t *pmotor = container_of(timer, motor_dev_t, timer);
+	//MOTOR_DEBUG("%s: fun in\n", __func__);
+	//MOTOR_DEBUG("%s: cnt:%d\n", __func__, pmotor->pwm_period_cnt);
+	
+	if (pmotor->pwm_period_cnt) {
+	//reverse cur gpio
+	gpio_set_value((pmotor->gpio)[MOTOR_GPIO_PWM], !gpio_get_value((pmotor->gpio)[MOTOR_GPIO_PWM]));
+	hrtimer_forward_now(timer,ktime_set(0, MOTOR_PWM_4KHZ * NSEC_PER_USEC));
+	ret = HRTIMER_RESTART;
+	} else {
 	schedule_work(&pmotor->work);
-	MOTOR_DEBUG("%s[%d]:func out\n",__func__, __LINE__);
-	return HRTIMER_NORESTART;
+	ret = HRTIMER_NORESTART;
+	}
+	pmotor->pwm_period_cnt--;
+	//MOTOR_DEBUG("%s[%d]:func out\n",__func__, __LINE__);
+	return ret;
 }
 
 static void rk_motor_work(struct work_struct *work)
@@ -170,44 +189,32 @@ static int motor_probe(struct platform_device *pdev)
 	enum of_gpio_flags flag;
 	motor_dev_t *pmotordata;
 	MOTOR_DEBUG("%s: fun in\n", __func__);
-	if (!strcmp("motor_open_door", np->name)) {
-		motor_id = MOTOR_OPEN_DOOR_ID;
-		pmotordata = &motor_data[MOTOR_OPEN_DOOR_ID];
-		(*pmotordata).timed_dev.name = "motor_open_door";
-		strcpy((*pmotordata).motor_type, "motor_open_door");
-		MOTOR_DEBUG("dev node is motor_open_door\n");
-	}
-	else if(!strcmp("motor_rotate_projector", np->name)) {
-		motor_id = MOTOR_ROTATE_ID;
-		pmotordata = &motor_data[MOTOR_ROTATE_ID];
-		(*pmotordata).timed_dev.name = "motor_rotate_projector";
-		strcpy((*pmotordata).motor_type, "motor_rotate_projector");
-
-		MOTOR_DEBUG("dev node is motor_rotate_projector\n");
-		
-	} else {
-		MOTOR_DEBUG("unknown motor type,return with failture!!!\n");
-		return -1;
+	if (!strcmp("motor_pwm", np->name)) {
+		motor_id = 0;
+		pmotordata = &motor_data[0];
+		(*pmotordata).timed_dev.name = "motor_pwm";
+		strcpy((*pmotordata).motor_type, "motor_pwm");
+		MOTOR_DEBUG("dev node is motor_pwm\n");
 	}
 	(*pmotordata).timed_dev.enable = rk_motor_enable; 
 	(*pmotordata).timed_dev.get_time = rk_motor_get_time;
 
-		
-	(*pmotordata).gpio[MOTOR_GPIO_POSITIVE] = of_get_named_gpio_flags(np, "motor-gpio-positive", 0, &flag);
-	if (!gpio_is_valid((*pmotordata).gpio[MOTOR_GPIO_POSITIVE]))
+	//方向GPIO配置		
+	(*pmotordata).gpio[MOTOR_GPIO_DIR] = of_get_named_gpio_flags(np, "motor-gpio-dir", 0, &flag);
+	if (!gpio_is_valid((*pmotordata).gpio[MOTOR_GPIO_DIR]))
 		return -1;
-	ret = devm_gpio_request(&pdev->dev, (*pmotordata).gpio[MOTOR_GPIO_POSITIVE], (motor_id == MOTOR_ROTATE_ID) ? "rotate_gpio_positive":"openDoor_gpio_positive");
+	ret = devm_gpio_request(&pdev->dev, (*pmotordata).gpio[MOTOR_GPIO_DIR], "motor-gpio-dir");
 	if (ret < 0)
 		return ret;
-	gpio_direction_output((*pmotordata).gpio[MOTOR_GPIO_POSITIVE], flag == OF_GPIO_ACTIVE_LOW ? 0:1);
-	
-	(*pmotordata).gpio[MOTOR_GPIO_NEGATIVE] = of_get_named_gpio_flags(np, "motor-gpio-negative", 0, &flag);
-	if (!gpio_is_valid((*pmotordata).gpio[MOTOR_GPIO_NEGATIVE]))
+	gpio_direction_output((*pmotordata).gpio[MOTOR_GPIO_DIR], flag == OF_GPIO_ACTIVE_LOW ? 0:1);
+	//输出PWM的IO配置
+	(*pmotordata).gpio[MOTOR_GPIO_PWM] = of_get_named_gpio_flags(np, "motor-gpio-pwm", 0, &flag);
+	if (!gpio_is_valid((*pmotordata).gpio[MOTOR_GPIO_PWM]))
 		return -1;
-	ret = devm_gpio_request(&pdev->dev, (*pmotordata).gpio[MOTOR_GPIO_NEGATIVE], (motor_id == MOTOR_ROTATE_ID) ? "rotate_gpio_negative":"openDoor_gpio_negative");
+	ret = devm_gpio_request(&pdev->dev, (*pmotordata).gpio[MOTOR_GPIO_PWM], "motor-gpio-pwm");
 	if (ret < 0)
 		return ret;
-	gpio_direction_output((*pmotordata).gpio[MOTOR_GPIO_NEGATIVE], flag == OF_GPIO_ACTIVE_LOW ? 0:1);
+	gpio_direction_output((*pmotordata).gpio[MOTOR_GPIO_PWM], flag == OF_GPIO_ACTIVE_LOW ? 0:1);
 
 	hrtimer_init(&(*pmotordata).timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
 	(*pmotordata).timer.function = rk_motor_timer_func;
@@ -233,7 +240,7 @@ static int motor_remove(struct platform_device *pdev)
 {
 	int i;
 
-	for (i = 0; i < 2; i++) {
+	for (i = 0; i < MOTOR_NUMS; i++) {
 	timed_output_dev_unregister(&(motor_data[i].timed_dev));
 	mutex_destroy(&(motor_data[i].lock));
 	//for (j = 0; j < 2; j++)
@@ -244,7 +251,7 @@ static int motor_remove(struct platform_device *pdev)
 }
 
 static const struct of_device_id motor_of_match[] = {
-	{ .compatible = "neolix-motor-gpio" },
+	{ .compatible = "neolix-motor_pwm" },
 	{ }
 };
 
@@ -252,7 +259,7 @@ static struct platform_driver motor_driver = {
 	.probe = motor_probe,
 	.remove = motor_remove,
 	.driver = {
-		.name           = "neolix-motor-driver",
+		.name           = "neolix-motor_pwm",
 		.of_match_table = of_match_ptr(motor_of_match),
 	},
 };

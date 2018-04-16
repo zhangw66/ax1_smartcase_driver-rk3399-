@@ -1,6 +1,6 @@
 KRN_SRC_PWD=/home/zhangw/workdir/rockchip/kernel
 
-obj-m += neolix_timed_gpio.o
+obj-m += neolix_pwm_gpio.o
 
 build:kernel_modules
 kernel_modules:

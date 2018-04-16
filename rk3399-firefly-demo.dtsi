@@ -55,15 +55,21 @@
 			compatible = "neolix-switch-gpio";
 			switch-irq-gpio = <&gpio4 29 IRQ_TYPE_EDGE_RISING>;  /* GPIO4_D5 */
 	};
+	motor_pwm: motor_pwm {
+			status = "disabled";
+			compatible = "neolix-motor_pwm";
+			motor-gpio-pwm = <&gpio1 9 GPIO_ACTIVE_HIGH>;		  /* GPIO1_B1 */  
+			motor-gpio-dir = <&gpio1 10 GPIO_ACTIVE_LOW>;		  /* GPIO1_B2 */
+	};
 
 	motor_open_door: motor_open_door {
-			status = "okay";
+			status = "enable";
 			compatible = "neolix-motor-gpio";
 			motor-gpio-positive = <&gpio1 9 GPIO_ACTIVE_HIGH>;		  /* GPIO1_B1 */
 			motor-gpio-negative = <&gpio1 10 GPIO_ACTIVE_LOW>;		  /* GPIO1_B2 */
 	};
 	motor_rotate_projector: motor_rotate_projector {
-				status = "okay";
+				status = "enable";
 				compatible = "neolix-motor-gpio";
 				motor-gpio-positive = <&gpio0 12 GPIO_ACTIVE_LOW>;		  /* GPIO0_B4 */
 				motor-gpio-negative = <&gpio1 8 GPIO_ACTIVE_HIGH>;		  /* GPIO1_B0 */
